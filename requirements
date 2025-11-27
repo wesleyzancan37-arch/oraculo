@@ -1,0 +1,9 @@
+numpy 
+streamlit 
+matplotlib
+fbprophet 
+plotly 
+datetime
+pandas 
+yfinance
+pystan==2.19.1.1 
