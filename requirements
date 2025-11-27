@@ -1,10 +1,9 @@
-numpy 
-streamlit 
+numpy
+pandas
+streamlit
 matplotlib
-fbprophet 
-plotly 
-datetime
-pandas 
+plotly
 yfinance
-pystan==2.19.1.1 
-yfinance
+prophet
+scikit-learn
+statsmodels
