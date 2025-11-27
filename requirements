@@ -1,9 +1,9 @@
+yfinance==0.2.36
 numpy
 pandas
 streamlit
 matplotlib
 plotly
-yfinance
 prophet
 scikit-learn
 statsmodels
