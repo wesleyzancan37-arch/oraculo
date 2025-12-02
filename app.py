@@ -1,106 +1,304 @@
-# Mini-Projeto 2 - Data App - Dashboard Financeiro Interativo e em Tempo Real Para Previsão de Ativos Financeiros
-
-# Imports
-import numpy as np
-import yfinance as yf
 import streamlit as st
-import matplotlib.pyplot as plt
-from prophet import Prophet
-from prophet.plot import plot_plotly
+import os
+import subprocess
+import tempfile
+from pathlib import Path
+import sys
 
-from plotly import graph_objs as go
-from datetime import date
-import warnings
-warnings.filterwarnings("ignore")
+# Configuração da página
+st.set_page_config(
+    page_title="Downloader de Vídeos",
+    page_icon="🎬",
+    layout="wide"
+)
 
-# Define a data de início para coleta  de dados
-INICIO = "2015-01-01"
+# Verificar se yt-dlp está instalado
+def check_ytdlp_installed():
+    try:
+        subprocess.run([sys.executable, "-m", "yt_dlp", "--version"], 
+                      capture_output=True, check=True)
+        return True
+    except:
+        return False
 
-# Define a data de fim para coleta de dados (data de hoje, execução do script)
-HOJE = date.today().strftime("%Y-%m-%d")
+# Função para instalar yt-dlp
+def install_ytdlp():
+    try:
+        subprocess.run([sys.executable, "-m", "pip", "install", "yt-dlp"], 
+                      capture_output=True, check=True)
+        return True
+    except:
+        return False
 
-# Define o título do Dashboard
-st.title("Mini-Projeto 2 - Data App")
-st.title("Dashboard Financeiro Interativo e em Tempo Real Para Previsão de Ativos Financeiros")
+# Função para obter informações do vídeo
+def get_video_info(url):
+    try:
+        cmd = [sys.executable, "-m", "yt_dlp", "-j", "--no-warnings", url]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if result.returncode == 0:
+            import json
+            return json.loads(result.stdout)
+        return None
+    except:
+        return None
 
-# Define o código das empresas para coleta dos dados de ativos financeiros
-# https://finance.yahoo.com/most-active
-empresas = ('PBR', 'GOOG', 'UBER', 'PFE')
+# Função para baixar vídeo
+def download_video(url, download_path, format_code=None, audio_only=False):
+    try:
+        cmd = [sys.executable, "-m", "yt_dlp"]
+        
+        # Adicionar opções baseadas nas escolhas
+        if audio_only:
+            cmd.extend(["-x", "--audio-format", "mp3"])
+        elif format_code:
+            cmd.extend(["-f", format_code])
+        else:
+            cmd.extend(["-f", "best"])
+        
+        # Adicionar caminho de saída
+        cmd.extend(["-o", os.path.join(download_path, "%(title)s.%(ext)s")])
+        
+        # Adicionar URL
+        cmd.append(url)
+        
+        # Executar download
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        output_lines = []
+        
+        # Barra de progresso
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        for line in process.stdout:
+            if "ETA" in line or "%" in line:
+                # Tentar extrair porcentagem
+                import re
+                match = re.search(r'(\d+\.?\d*)%', line)
+                if match:
+                    percent = float(match.group(1))
+                    progress_bar.progress(min(percent / 100, 1.0))
+                    status_text.text(f"Progresso: {percent:.1f}% - {line.strip()}")
+            output_lines.append(line)
+        
+        process.wait()
+        
+        if process.returncode == 0:
+            return True, "Download concluído com sucesso!"
+        else:
+            error_msg = process.stderr.read()
+            return False, f"Erro no download: {error_msg}"
+            
+    except Exception as e:
+        return False, f"Erro: {str(e)}"
 
-# Define de qual empresa usaremos os dados por vez
-empresa_selecionada = st.selectbox('Selecione a Empresa Para as Previsões de Ativos Financeiros:', empresas)
+# Título da aplicação
+st.title("🎬 Downloader de Vídeos")
+st.markdown("---")
 
-# Função para extrair e carregar os dados
-@st.cache
-def carrega_dados(ticker):
-    dados = yf.download(ticker, INICIO, HOJE)
-    dados.reset_index(inplace = True)
-    return dados
+# Verificar/instalar yt-dlp
+if not check_ytdlp_installed():
+    st.warning("📦 yt-dlp não está instalado. Instalando...")
+    if install_ytdlp():
+        st.success("✅ yt-dlp instalado com sucesso!")
+        st.rerun()
+    else:
+        st.error("❌ Falha ao instalar yt-dlp. Verifique sua conexão com a internet.")
+        st.stop()
 
-# Mensagem de carga dos dados
-mensagem = st.text('Carregando os dados...')
-
-# Carrega os dados
-dados = carrega_dados(empresa_selecionada)
-
-# Mensagem de encerramento da carga dos dados
-mensagem.text('Carregando os dados...Concluído!')
-
-# Sub-título
-st.subheader('Visualização dos Dados Brutos')
-st.write(dados.tail())
-
-# Função para o plot dos dados brutos
-def plot_dados_brutos():
-	fig = go.Figure()
-	fig.add_trace(go.Scatter(x = dados['Date'], y = dados['Open'], name = "stock_open"))
-	fig.add_trace(go.Scatter(x = dados['Date'], y = dados['Close'], name = "stock_close"))
-	fig.layout.update(title_text = 'Preço de Abertura e Fechamento das Ações', xaxis_rangeslider_visible = True)
-	st.plotly_chart(fig)
-	
-# Executa a função
-plot_dados_brutos()
-
-st.subheader('Previsões com Machine Learning')
-
-# Prepara os dados para as previsões com o pacote Prophet
-df_treino = dados[['Date','Close']]
-df_treino = df_treino.rename(columns = {"Date": "ds", "Close": "y"})
-
-# Cria o modelo
-modelo = Prophet()
-
-# Treina o modelo
-modelo.fit(df_treino)
-
-# Define o horizonte de previsão
-num_anos = st.slider('Horizonte de Previsão (em anos):', 1, 4)
-
-# Calcula o período em dias
-periodo = num_anos * 365
-
-# Prepara as datas futuras para as previsões
-futuro = modelo.make_future_dataframe(periods = periodo)
-
-# Faz as previsões
-forecast = modelo.predict(futuro)
-
-# Sub-título
-st.subheader('Dados Previstos')
-
-# Dados previstos
-st.write(forecast.tail())
+# Barra lateral para configurações
+with st.sidebar:
+    st.header("⚙️ Configurações")
     
-# Título
-st.subheader('Previsão de Preço dos Ativos Financeiros Para o Período Selecionado')
+    # Selecionar diretório de download
+    st.subheader("📁 Local de Download")
+    
+    # Opção 1: Diretório padrão
+    download_dir = st.text_input(
+        "Caminho para salvar os vídeos:",
+        value=os.path.join(str(Path.home()), "Downloads")
+    )
+    
+    # Opção 2: Selecionar diretório (se suportado)
+    st.caption("Ou use um diretório temporário:")
+    if st.button("📂 Usar Diretório Temporário"):
+        download_dir = tempfile.mkdtemp()
+        st.success(f"Diretório temporário criado: {download_dir}")
+    
+    # Verificar se diretório existe
+    if not os.path.exists(download_dir):
+        st.warning("⚠️ Diretório não existe. Criando...")
+        os.makedirs(download_dir, exist_ok=True)
+    
+    st.info(f"**Vídeos serão salvos em:**\n`{download_dir}`")
+    
+    st.markdown("---")
+    
+    # Opções avançadas
+    st.subheader("🎛️ Opções Avançadas")
+    audio_only = st.checkbox("Baixar apenas áudio (MP3)")
+    
+    st.markdown("---")
+    st.caption("Feito com Streamlit e yt-dlp")
 
-# Plot
-grafico2 = plot_plotly(modelo, forecast)
-st.plotly_chart(grafico2)
+# Área principal
+col1, col2 = st.columns([2, 1])
 
-# Fim
+with col1:
+    # Entrada da URL
+    st.subheader("🔗 Cole a URL do Vídeo")
+    url = st.text_input(
+        "URL:",
+        placeholder="https://www.youtube.com/watch?v=...",
+        label_visibility="collapsed"
+    )
+    
+    # Botão para colar da área de transferência
+    if st.button("📋 Colar da Área de Transferência"):
+        try:
+            import pyperclip
+            clipboard_content = pyperclip.paste()
+            if clipboard_content and ("youtube.com" in clipboard_content or "youtu.be" in clipboard_content):
+                st.session_state.url_input = clipboard_content
+                st.rerun()
+        except:
+            st.warning("Não foi possível acessar a área de transferência")
+    
+    if url:
+        # Obter informações do vídeo
+        with st.spinner("Obtendo informações do vídeo..."):
+            video_info = get_video_info(url)
+        
+        if video_info:
+            # Exibir informações do vídeo
+            st.success("✅ URL válida detectada!")
+            
+            col_info1, col_info2 = st.columns(2)
+            with col_info1:
+                st.metric("Título", video_info.get('title', 'N/A'))
+                st.metric("Duração", f"{video_info.get('duration', 0) // 60}:{video_info.get('duration', 0) % 60:02d}")
+            
+            with col_info2:
+                st.metric("Autor", video_info.get('uploader', 'N/A'))
+                st.metric("Visualizações", f"{video_info.get('view_count', 0):,}")
+            
+            # Formato de download
+            st.subheader("📥 Opções de Download")
+            
+            if not audio_only:
+                # Obter formatos disponíveis
+                try:
+                    formats = video_info.get('formats', [])
+                    if formats:
+                        format_options = {}
+                        for f in formats:
+                            if f.get('format_note') and f.get('ext') in ['mp4', 'webm']:
+                                quality = f"{f.get('format_note', '')} ({f.get('ext', '')})"
+                                format_options[quality] = f.get('format_id')
+                        
+                        if format_options:
+                            selected_format = st.selectbox(
+                                "Selecione a qualidade:",
+                                options=list(format_options.keys()),
+                                index=len(format_options)-1
+                            )
+                            format_code = format_options[selected_format]
+                        else:
+                            format_code = None
+                    else:
+                        format_code = None
+                except:
+                    format_code = None
+            else:
+                format_code = None
+                st.info("Baixando apenas áudio em MP3")
+            
+            # Botão de download
+            st.markdown("---")
+            col_btn1, col_btn2, col_btn3 = st.columns(3)
+            
+            with col_btn2:
+                download_button = st.button(
+                    "🚀 Iniciar Download",
+                    type="primary",
+                    use_container_width=True
+                )
+            
+            if download_button:
+                if not url:
+                    st.error("❌ Por favor, cole uma URL válida")
+                elif not os.path.exists(download_dir):
+                    st.error("❌ Diretório de download não existe")
+                else:
+                    # Iniciar download
+                    success, message = download_video(url, download_dir, format_code, audio_only)
+                    
+                    if success:
+                        st.balloons()
+                        st.success(f"✅ {message}")
+                        
+                        # Mostrar arquivo baixado
+                        try:
+                            import glob
+                            latest_file = max(glob.glob(os.path.join(download_dir, "*")), 
+                                            key=os.path.getctime)
+                            st.info(f"📄 Arquivo salvo como: `{os.path.basename(latest_file)}`")
+                        except:
+                            pass
+                    else:
+                        st.error(f"❌ {message}")
+        
+        elif url and not video_info:
+            st.error("❌ Não foi possível obter informações do vídeo. Verifique a URL.")
 
+with col2:
+    # Instruções e dicas
+    st.subheader("📝 Como Usar")
+    
+    with st.expander("💡 Instruções", expanded=True):
+        st.markdown("""
+        1. **Cole a URL** do vídeo na caixa de texto
+        2. **Escolha o local** para salvar o arquivo
+        3. **Selecione a qualidade** desejada
+        4. Clique em **Iniciar Download**
+        
+        **Sites suportados:**
+        - YouTube
+        - Vimeo
+        - Twitter
+        - Instagram
+        - Facebook
+        - E muitos outros
+        """)
+    
+    with st.expander("⚠️ Avisos Legais"):
+        st.warning("""
+        **Use com responsabilidade:**
+        - Respeite os direitos autorais
+        - Não distribua conteúdo protegido
+        - Use apenas para conteúdo pessoal
+        - Verifique as políticas de uso de cada site
+        
+        Esta ferramenta é apenas para fins educacionais.
+        """)
+    
+    # Status do sistema
+    st.subheader("🔧 Status do Sistema")
+    
+    # Verificar espaço em disco
+    try:
+        total, used, free = shutil.disk_usage(download_dir)
+        st.metric("Espaço livre", f"{free // (2**30)} GB")
+    except:
+        pass
+    
+    # Versão do yt-dlp
+    try:
+        result = subprocess.run([sys.executable, "-m", "yt_dlp", "--version"], 
+                              capture_output=True, text=True)
+        st.caption(f"yt-dlp v{result.stdout.strip()}")
+    except:
+        st.caption("yt-dlp não disponível")
 
-
-
-
+# Rodapé
+st.markdown("---")
+st.caption("🔄 Atualize a página para começar um novo download")
